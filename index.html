@@ -116,6 +116,18 @@ async function apiSet(valueString) {
   return true;
 }
 
+// Google Apps Script occasionally returns a transient error (cold start,
+// brief rate limit, etc). Retry once after a short delay before giving up,
+// so a single blip doesn't flash an error message at the user.
+async function apiGetWithRetry() {
+  try {
+    return await apiGet();
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 800));
+    return await apiGet();
+  }
+}
+
 function ScoringApp() {
   const [activeTab, setActiveTab] = useState("leaderboard");
   const [scores, setScores] = useState(emptyScores());
@@ -130,18 +142,45 @@ function ScoringApp() {
   const [configWarning, setConfigWarning] = useState(
     API_URL.indexOf("PASTE_YOUR") === 0
   );
+  const consecutiveFailuresRef = useRef(0);
+  // Tracks whether a local edit is pending a save (or was saved less than
+  // PENDING_COOLDOWN_MS ago). While true, incoming polling results are
+  // ignored so they can't overwrite what the person just typed with a
+  // stale value fetched before the save landed.
+  const pendingEditRef = useRef(false);
+  const pendingEditTimeoutRef = useRef(null);
+  const saveDebounceRef = useRef(null);
+  const PENDING_COOLDOWN_MS = 2500;
+
+  const markPendingEdit = () => {
+    pendingEditRef.current = true;
+    if (pendingEditTimeoutRef.current) clearTimeout(pendingEditTimeoutRef.current);
+    pendingEditTimeoutRef.current = setTimeout(() => {
+      pendingEditRef.current = false;
+    }, PENDING_COOLDOWN_MS);
+  };
 
   const loadScores = useCallback(async () => {
     if (configWarning) { setLoading(false); return; }
+    // Skip this poll entirely if the person is mid-edit (or just saved very
+    // recently) — applying a fetch that was in flight before their edit
+    // landed would silently revert what they just typed.
+    if (pendingEditRef.current) { setLoading(false); return; }
     try {
-      const value = await apiGet();
-      if (value) {
+      const value = await apiGetWithRetry();
+      if (value && !pendingEditRef.current) {
         const parsed = JSON.parse(value);
         setScores({ ...emptyScores(), ...parsed });
       }
+      consecutiveFailuresRef.current = 0;
       setError(null);
     } catch (e) {
-      setError("โหลดข้อมูลไม่สำเร็จ ตรวจสอบการเชื่อมต่อ");
+      consecutiveFailuresRef.current += 1;
+      // Only surface the error after 2 consecutive failures (~8+ seconds of
+      // being unreachable) so a single transient blip stays invisible.
+      if (consecutiveFailuresRef.current >= 2) {
+        setError("โหลดข้อมูลไม่สำเร็จ ตรวจสอบการเชื่อมต่อ");
+      }
     } finally {
       setLoading(false);
     }
@@ -149,7 +188,7 @@ function ScoringApp() {
 
   useEffect(() => {
     loadScores();
-    const interval = setInterval(loadScores, 4000);
+    const interval = setInterval(loadScores, 5000);
     return () => clearInterval(interval);
   }, [loadScores]);
 
@@ -166,13 +205,26 @@ function ScoringApp() {
     }
   };
 
+  // Debounced save: waits until typing pauses for 500ms before actually
+  // sending the request, instead of firing one POST per keystroke. This
+  // both reduces load on the Apps Script backend and shrinks the window
+  // where a poll could race an in-flight save.
+  const debouncedSaveScores = (newScores) => {
+    markPendingEdit();
+    setSaving(true);
+    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+    saveDebounceRef.current = setTimeout(() => {
+      saveScores(newScores);
+    }, 500);
+  };
+
   const setRawScore = (sportId, team, value) => {
     if (!isUnlocked) return;
     setScores((prev) => {
       const sportData = { ...prev[sportId] };
       const raw = { ...sportData.raw, [team]: value === "" ? null : Number(value) };
       const updated = { ...prev, [sportId]: { ...sportData, raw } };
-      saveScores(updated);
+      debouncedSaveScores(updated);
       return updated;
     });
   };
@@ -182,6 +234,7 @@ function ScoringApp() {
     setScores((prev) => {
       const sportData = { ...prev[sportId] };
       const updated = { ...prev, [sportId]: { ...sportData, higherWins: !sportData.higherWins } };
+      markPendingEdit();
       saveScores(updated);
       return updated;
     });
@@ -195,6 +248,7 @@ function ScoringApp() {
         ...prev,
         [sportId]: { higherWins: sportDef.higherWins, raw: { A: null, B: null, C: null, D: null } },
       };
+      markPendingEdit();
       saveScores(updated);
       return updated;
     });
