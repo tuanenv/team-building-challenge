@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Export ข้อมูล — Exhibition Registration</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Tahoma, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1.5rem;
+  }
+  .container { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .status {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 1.5rem;
+  }
+  .status.connecting { background: #1e293b; color: #94a3b8; }
+  .status.connected { background: #064e3b; color: #6ee7b7; }
+  .status.error { background: #450a0a; color: #fca5a5; }
+  .summary-card {
+    background: #1e293b;
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .summary-card .count { font-size: 2rem; font-weight: 800; color: #fbbf24; }
+  .summary-card .label { color: #94a3b8; font-size: 0.85rem; }
+  select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+  }
+  button {
+    width: 100%;
+    padding: 0.8rem;
+    border-radius: 8px;
+    border: none;
+    background: #f59e0b;
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
+  .result-msg { margin-top: 0.75rem; font-size: 0.85rem; text-align: center; }
+  .result-msg.success { color: #6ee7b7; }
+  .result-msg.fail { color: #fca5a5; }
+  .preview-note { color: #64748b; font-size: 0.8rem; margin-top: 1.5rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📊 Export ข้อมูลลงทะเบียนเป็น Excel</h1>
+  <p class="subtitle">อ่านข้อมูลจาก Firebase Realtime Database → แปลงเป็นไฟล์ .xlsx</p>
+
+  <div id="connection-status" class="status connecting">กำลังเชื่อมต่อ Firebase...</div>
+
+  <div class="summary-card">
+    <div class="count" id="record-count">-</div>
+    <div class="label">จำนวน record ทั้งหมดใน attendees_test</div>
+  </div>
+
+  <label style="display:block; font-size:0.8rem; color:#94a3b8; margin-bottom:0.35rem;">
+    เลือก path ที่จะ export (ปกติใช้ attendees_test สำหรับตอนนี้)
+  </label>
+  <select id="path-select">
+    <option value="attendees_test">attendees_test (ข้อมูลทดสอบตอนนี้)</option>
+    <option value="attendees">attendees (สำหรับระบบจริงในอนาคต)</option>
+  </select>
+
+  <button id="export-btn" disabled>ดาวน์โหลดเป็น Excel (.xlsx)</button>
+  <div id="result-msg" class="result-msg"></div>
+
+  <p class="preview-note">ไฟล์จะดาวน์โหลดอัตโนมัติเมื่อกดปุ่ม ไม่มีการอัปโหลดข้อมูลไปที่อื่น — ทำงานในเบราว์เซอร์ของคุณเท่านั้น</p>
+</div>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyBBtt3OUD40oI1MvIJB1O-LtNjpbqK92mQ",
+    authDomain: "exhibition-registration-8deec.firebaseapp.com",
+    databaseURL: "https://exhibition-registration-8deec-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "exhibition-registration-8deec",
+    storageBucket: "exhibition-registration-8deec.firebasestorage.app",
+    messagingSenderId: "930490413482",
+    appId: "1:930490413482:web:67ae0d5d413e1a30bebbd3"
+  };
+
+  const statusEl = document.getElementById("connection-status");
+  const countEl = document.getElementById("record-count");
+  const pathSelectEl = document.getElementById("path-select");
+  const exportBtn = document.getElementById("export-btn");
+  const resultMsgEl = document.getElementById("result-msg");
+
+  let db;
+
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    statusEl.textContent = "✅ เชื่อมต่อ Firebase สำเร็จ";
+    statusEl.className = "status connected";
+    exportBtn.disabled = false;
+    refreshCount();
+  } catch (e) {
+    statusEl.textContent = "❌ เชื่อมต่อ Firebase ไม่สำเร็จ: " + e.message;
+    statusEl.className = "status error";
+  }
+
+  pathSelectEl.addEventListener("change", refreshCount);
+
+  async function refreshCount() {
+    countEl.textContent = "...";
+    try {
+      const snapshot = await db.ref(pathSelectEl.value).once("value");
+      const data = snapshot.val();
+      const count = data ? Object.keys(data).length : 0;
+      countEl.textContent = count.toLocaleString();
+    } catch (e) {
+      countEl.textContent = "?";
+    }
+  }
+
+  exportBtn.addEventListener("click", async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = "กำลังดึงข้อมูล...";
+    resultMsgEl.textContent = "";
+    resultMsgEl.className = "result-msg";
+
+    try {
+      const path = pathSelectEl.value;
+      const snapshot = await db.ref(path).once("value");
+      const data = snapshot.val();
+
+      if (!data) {
+        resultMsgEl.textContent = "⚠️ ไม่มีข้อมูลใน path นี้";
+        resultMsgEl.className = "result-msg fail";
+        exportBtn.disabled = false;
+        exportBtn.textContent = "ดาวน์โหลดเป็น Excel (.xlsx)";
+        return;
+      }
+
+      // Flatten Firebase object-of-objects into an array of rows
+      const rows = Object.entries(data).map(([key, record]) => {
+        const row = { รหัส: key };
+        Object.entries(record).forEach(([field, value]) => {
+          if (field === "registeredAt" && typeof value === "number") {
+            row["เวลาลงทะเบียน"] = new Date(value).toLocaleString("th-TH");
+          } else {
+            row[fieldLabel(field)] = value;
+          }
+        });
+        return row;
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Attendees");
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `exhibition-registration-${path}-${dateStr}.xlsx`;
+      XLSX.writeFile(workbook, filename);
+
+      resultMsgEl.textContent = `✅ ดาวน์โหลดสำเร็จ! (${rows.length.toLocaleString()} record) → ${filename}`;
+      resultMsgEl.className = "result-msg success";
+    } catch (err) {
+      resultMsgEl.textContent = "❌ Export ไม่สำเร็จ: " + err.message;
+      resultMsgEl.className = "result-msg fail";
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = "ดาวน์โหลดเป็น Excel (.xlsx)";
+    }
+  });
+
+  function fieldLabel(field) {
+    const labels = {
+      name: "ชื่อ-นามสกุล",
+      phone: "เบอร์โทร",
+      email: "อีเมล",
+      company: "บริษัท",
+      position: "ตำแหน่งงาน",
+      type: "ประเภทผู้เข้าร่วม",
+      checkedIn: "เช็คอินแล้ว",
+      checkedInAt: "เวลาเช็คอิน",
+    };
+    return labels[field] || field;
+  }
+</script>
+</body>
+</html>
