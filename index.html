@@ -509,9 +509,21 @@ function RawScoreInput({ team, value, onChange, disabled }) {
 function BarChartCanvas({ barData }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const [chartLibReady, setChartLibReady] = useState(typeof Chart !== "undefined");
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (chartLibReady) return;
+    const interval = setInterval(() => {
+      if (typeof Chart !== "undefined") {
+        setChartLibReady(true);
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [chartLibReady]);
+
+  useEffect(() => {
+    if (!chartLibReady || !canvasRef.current) return;
     const labels = barData.map((row) => row.name);
     const datasets = TEAMS.map((t) => ({
       label: `ทีม ${t}`,
@@ -565,7 +577,15 @@ function BarChartCanvas({ barData }) {
         chartRef.current = null;
       }
     };
-  }, [barData]);
+  }, [barData, chartLibReady]);
+
+  if (!chartLibReady) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        กำลังโหลดกราฟ...
+      </div>
+    );
+  }
 
   return <canvas ref={canvasRef} height={280}></canvas>;
 }
@@ -573,9 +593,21 @@ function BarChartCanvas({ barData }) {
 function RadarChartCanvas({ radarData }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const [chartLibReady, setChartLibReady] = useState(typeof Chart !== "undefined");
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (chartLibReady) return;
+    const interval = setInterval(() => {
+      if (typeof Chart !== "undefined") {
+        setChartLibReady(true);
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [chartLibReady]);
+
+  useEffect(() => {
+    if (!chartLibReady || !canvasRef.current) return;
     const labels = radarData.map((row) => row.sport);
     const datasets = TEAMS.map((t) => ({
       label: `ทีม ${t}`,
@@ -621,7 +653,15 @@ function RadarChartCanvas({ radarData }) {
         chartRef.current = null;
       }
     };
-  }, [radarData]);
+  }, [radarData, chartLibReady]);
+
+  if (!chartLibReady) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        กำลังโหลดกราฟ...
+      </div>
+    );
+  }
 
   return <canvas ref={canvasRef} height={280}></canvas>;
 }
