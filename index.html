@@ -15,6 +15,29 @@
 </head>
 <body>
 <div id="root"></div>
+<div id="load-error" style="display:none; color:#f87171; font-family:sans-serif; padding:2rem; text-align:center; white-space:pre-line;"></div>
+
+<script>
+  // Defensive check: if a required library failed to load (e.g. blocked by
+  // a corporate firewall/proxy), show a clear message instead of leaving
+  // the page blank. This runs independently of the main app script below.
+  window.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      var missing = [];
+      if (typeof React === "undefined") missing.push("React (cdnjs.cloudflare.com)");
+      if (typeof ReactDOM === "undefined") missing.push("ReactDOM (cdnjs.cloudflare.com)");
+      if (typeof Chart === "undefined") missing.push("Chart.js (cdnjs.cloudflare.com)");
+      if (typeof Babel === "undefined") missing.push("Babel (unpkg.com)");
+      var rootEl = document.getElementById("root");
+      if (missing.length > 0 && (!rootEl || !rootEl.hasChildNodes())) {
+        document.getElementById("load-error").style.display = "block";
+        document.getElementById("load-error").innerText =
+          "โหลดไลบรารีไม่สำเร็จ: " + missing.join(", ") +
+          "\n\nเครือข่ายนี้อาจบล็อกโดเมนดังกล่าว ลองเปิดจากเครือข่ายอื่น (เช่น เน็ตมือถือ) หรือแจ้งทีม IT ให้ปลดบล็อก";
+      }
+    }, 3000);
+  });
+</script>
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef, Fragment } = React;
