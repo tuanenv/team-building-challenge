@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Firebase Connection Test — Exhibition Registration</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Tahoma, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1.5rem;
+  }
+  .container { max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .status {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 1.5rem;
+  }
+  .status.connecting { background: #1e293b; color: #94a3b8; }
+  .status.connected { background: #064e3b; color: #6ee7b7; }
+  .status.error { background: #450a0a; color: #fca5a5; }
+  label { display: block; font-size: 0.8rem; color: #94a3b8; margin: 0.75rem 0 0.25rem; }
+  input, select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+  }
+  input:focus, select:focus { outline: none; border-color: #f59e0b; }
+  button {
+    width: 100%;
+    margin-top: 1.25rem;
+    padding: 0.7rem;
+    border-radius: 8px;
+    border: none;
+    background: #f59e0b;
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
+  .result-msg { margin-top: 0.75rem; font-size: 0.85rem; }
+  .result-msg.success { color: #6ee7b7; }
+  .result-msg.fail { color: #fca5a5; }
+  .list-section { margin-top: 2.5rem; }
+  .list-section h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
+  .record {
+    background: #1e293b;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .record .name { font-weight: 700; color: #fbbf24; }
+  .record .meta { color: #94a3b8; margin-top: 0.15rem; }
+  .empty-note { color: #64748b; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🧪 ทดสอบเชื่อมต่อ Firebase</h1>
+  <p class="subtitle">GitHub Pages ↔ Firebase Realtime Database — Exhibition Registration (test)</p>
+
+  <div id="connection-status" class="status connecting">กำลังเชื่อมต่อ Firebase...</div>
+
+  <form id="test-form">
+    <label>ชื่อ-นามสกุล</label>
+    <input type="text" id="f-name" required />
+
+    <label>เบอร์โทร</label>
+    <input type="tel" id="f-phone" required />
+
+    <label>อีเมล</label>
+    <input type="email" id="f-email" required />
+
+    <label>บริษัท</label>
+    <input type="text" id="f-company" />
+
+    <label>ตำแหน่งงาน</label>
+    <input type="text" id="f-position" />
+
+    <label>ประเภทผู้เข้าร่วม</label>
+    <select id="f-type">
+      <option value="general">ทั่วไป</option>
+      <option value="vip">VIP</option>
+      <option value="staff">เจ้าหน้าที่/ทีมงาน</option>
+      <option value="speaker">วิทยากร</option>
+    </select>
+
+    <button type="submit" id="submit-btn">บันทึกทดสอบลง Firebase</button>
+    <div id="result-msg" class="result-msg"></div>
+  </form>
+
+  <div class="list-section">
+    <h2>รายการที่บันทึกไว้ (real-time)</h2>
+    <div id="records-list">
+      <p class="empty-note">ยังไม่มีข้อมูล...</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---- Firebase config (from your project) ----
+  const firebaseConfig = {
+    apiKey: "AIzaSyBBtt3OUD40oI1MvIJB1O-LtNjpbqK92mQ",
+    authDomain: "exhibition-registration-8deec.firebaseapp.com",
+    databaseURL: "https://exhibition-registration-8deec-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "exhibition-registration-8deec",
+    storageBucket: "exhibition-registration-8deec.firebasestorage.app",
+    messagingSenderId: "930490413482",
+    appId: "1:930490413482:web:67ae0d5d413e1a30bebbd3"
+  };
+
+  const statusEl = document.getElementById("connection-status");
+  const formEl = document.getElementById("test-form");
+  const submitBtn = document.getElementById("submit-btn");
+  const resultMsgEl = document.getElementById("result-msg");
+  const recordsListEl = document.getElementById("records-list");
+
+  let db;
+
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    statusEl.textContent = "✅ เชื่อมต่อ Firebase สำเร็จ (SDK โหลดและ initialize แล้ว)";
+    statusEl.className = "status connected";
+  } catch (e) {
+    statusEl.textContent = "❌ เชื่อมต่อ Firebase ไม่สำเร็จ: " + e.message;
+    statusEl.className = "status error";
+  }
+
+  // ---- Write test ----
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    submitBtn.disabled = true;
+    submitBtn.textContent = "กำลังบันทึก...";
+    resultMsgEl.textContent = "";
+    resultMsgEl.className = "result-msg";
+
+    const record = {
+      name: document.getElementById("f-name").value.trim(),
+      phone: document.getElementById("f-phone").value.trim(),
+      email: document.getElementById("f-email").value.trim(),
+      company: document.getElementById("f-company").value.trim(),
+      position: document.getElementById("f-position").value.trim(),
+      type: document.getElementById("f-type").value,
+      registeredAt: Date.now(),
+    };
+
+    try {
+      const newRef = db.ref("attendees_test").push();
+      await newRef.set(record);
+      resultMsgEl.textContent = "✅ บันทึกสำเร็จ! รหัส: " + newRef.key;
+      resultMsgEl.className = "result-msg success";
+      formEl.reset();
+    } catch (err) {
+      resultMsgEl.textContent = "❌ บันทึกไม่สำเร็จ: " + err.message;
+      resultMsgEl.className = "result-msg fail";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "บันทึกทดสอบลง Firebase";
+    }
+  });
+
+  // ---- Read test (real-time listener) ----
+  if (db) {
+    db.ref("attendees_test").on("value", (snapshot) => {
+      const data = snapshot.val();
+      if (!data) {
+        recordsListEl.innerHTML = '<p class="empty-note">ยังไม่มีข้อมูล...</p>';
+        return;
+      }
+      const entries = Object.entries(data).sort((a, b) => (b[1].registeredAt || 0) - (a[1].registeredAt || 0));
+      recordsListEl.innerHTML = entries.map(([key, r]) => `
+        <div class="record">
+          <div class="name">${escapeHtml(r.name || "(ไม่มีชื่อ)")}</div>
+          <div class="meta">
+            ${escapeHtml(r.phone || "-")} · ${escapeHtml(r.email || "-")}<br/>
+            ${escapeHtml(r.company || "-")} · ${escapeHtml(r.position || "-")} · ${escapeHtml(r.type || "-")}<br/>
+            รหัส: ${key}
+          </div>
+        </div>
+      `).join("");
+    }, (err) => {
+      recordsListEl.innerHTML = '<p class="empty-note" style="color:#fca5a5">โหลดข้อมูลไม่สำเร็จ: ' + err.message + '</p>';
+    });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+</script>
+</body>
+</html>
