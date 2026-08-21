@@ -6,9 +6,7 @@
 <title>Team Building Challenge</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/react-is@18.2.0/umd/react-is.production.min.js"></script>
-<script src="https://unpkg.com/prop-types@15.8.1/prop-types.js"></script>
-<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -19,11 +17,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useEffect, useCallback, Fragment } = React;
-const {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
-} = Recharts;
+const { useState, useEffect, useCallback, useRef, Fragment } = React;
 
 /* =========================================================
    1) SET THIS to your Google Apps Script Web App URL
@@ -489,6 +483,126 @@ function RawScoreInput({ team, value, onChange, disabled }) {
   );
 }
 
+function BarChartCanvas({ barData }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const labels = barData.map((row) => row.name);
+    const datasets = TEAMS.map((t) => ({
+      label: `ทีม ${t}`,
+      data: barData.map((row) => row[t] || 0),
+      backgroundColor: TEAM_COLORS[t].hex,
+      borderRadius: 3,
+      maxBarThickness: 22,
+    }));
+
+    if (chartRef.current) {
+      chartRef.current.data.labels = labels;
+      chartRef.current.data.datasets = datasets;
+      chartRef.current.update();
+      return;
+    }
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            ticks: { color: "#94a3b8", font: { size: 11 } },
+            grid: { color: "#334155" },
+          },
+          y: {
+            beginAtZero: true,
+            max: 10,
+            ticks: { color: "#94a3b8", font: { size: 11 } },
+            grid: { color: "#334155" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0", font: { size: 12 } } },
+          tooltip: {
+            backgroundColor: "#1e293b",
+            borderColor: "#334155",
+            borderWidth: 1,
+            titleColor: "#e2e8f0",
+            bodyColor: "#e2e8f0",
+          },
+        },
+      },
+    });
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [barData]);
+
+  return <canvas ref={canvasRef} height={280}></canvas>;
+}
+
+function RadarChartCanvas({ radarData }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const labels = radarData.map((row) => row.sport);
+    const datasets = TEAMS.map((t) => ({
+      label: `ทีม ${t}`,
+      data: radarData.map((row) => row[t] || 0),
+      borderColor: TEAM_COLORS[t].hex,
+      backgroundColor: TEAM_COLORS[t].hex + "26",
+      pointBackgroundColor: TEAM_COLORS[t].hex,
+      borderWidth: 2,
+    }));
+
+    if (chartRef.current) {
+      chartRef.current.data.labels = labels;
+      chartRef.current.data.datasets = datasets;
+      chartRef.current.update();
+      return;
+    }
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "radar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          r: {
+            beginAtZero: true,
+            max: 10,
+            angleLines: { color: "#334155" },
+            grid: { color: "#334155" },
+            pointLabels: { color: "#94a3b8", font: { size: 10 } },
+            ticks: { color: "#64748b", backdropColor: "transparent", font: { size: 9 } },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0", font: { size: 12 } } },
+        },
+      },
+    });
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [radarData]);
+
+  return <canvas ref={canvasRef} height={280}></canvas>;
+}
+
 function Leaderboard({ teamTotals, barData, radarData }) {
   return (
     <div className="space-y-6">
@@ -514,34 +628,16 @@ function Leaderboard({ teamTotals, barData, radarData }) {
 
       <div className="bg-slate-800/60 rounded-xl p-3 sm:p-4">
         <h3 className="text-sm font-semibold text-slate-300 mb-3">คะแนนแยกตามกีฬา</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={barData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={50} />
-            <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} domain={[0, 10]} />
-            <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, fontSize: 12 }} labelStyle={{ color: "#e2e8f0" }} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            {TEAMS.map((t) => (
-              <Bar key={t} dataKey={t} fill={TEAM_COLORS[t].hex} name={`ทีม ${t}`} radius={[3, 3, 0, 0]} />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        <div style={{ position: "relative", height: 280 }}>
+          <BarChartCanvas barData={barData} />
+        </div>
       </div>
 
       <div className="bg-slate-800/60 rounded-xl p-3 sm:p-4">
         <h3 className="text-sm font-semibold text-slate-300 mb-3">ภาพรวมความแข็งแกร่งแต่ละทีม</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <RadarChart data={radarData}>
-            <PolarGrid stroke="#334155" />
-            <PolarAngleAxis dataKey="sport" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-            <PolarRadiusAxis domain={[0, 10]} tick={{ fill: "#64748b", fontSize: 9 }} />
-            {TEAMS.map((t) => (
-              <Radar key={t} name={`ทีม ${t}`} dataKey={t} stroke={TEAM_COLORS[t].hex} fill={TEAM_COLORS[t].hex} fillOpacity={0.15} />
-            ))}
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, fontSize: 12 }} />
-          </RadarChart>
-        </ResponsiveContainer>
+        <div style={{ position: "relative", height: 280 }}>
+          <RadarChartCanvas radarData={radarData} />
+        </div>
       </div>
 
       <p className="text-center text-xs text-slate-500">
