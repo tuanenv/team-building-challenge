@@ -6,7 +6,7 @@
 <title>Team Building Challenge</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -26,7 +26,7 @@
       var missing = [];
       if (typeof React === "undefined") missing.push("React (cdnjs.cloudflare.com)");
       if (typeof ReactDOM === "undefined") missing.push("ReactDOM (cdnjs.cloudflare.com)");
-      if (typeof Chart === "undefined") missing.push("Chart.js (cdnjs.cloudflare.com)");
+      if (typeof Chart === "undefined") missing.push("Chart.js (cdn.jsdelivr.net)");
       if (typeof Babel === "undefined") missing.push("Babel (unpkg.com)");
       var rootEl = document.getElementById("root");
       if (missing.length > 0 && (!rootEl || !rootEl.hasChildNodes())) {
