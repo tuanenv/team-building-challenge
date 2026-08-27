@@ -46,7 +46,24 @@ const API_URL = "https://script.google.com/macros/s/AKfycbxDqWP7kYLcmg2UQMZEgBXN
 const SHEET_NAME = "team_registration";
 const EDIT_PIN = "2808";
 
-const MOCK_NAMES = Array.from({ length: 16 }, (_, i) => `${i + 1}. สมาชิก ${String.fromCharCode(65 + (i % 26))}${i + 1}`);
+const MOCK_NAMES = [
+  "พี่ทวน",
+  "พี่แตง",
+  "พี่เติ้ล",
+  "พี่ไต้ฝุ่น",
+  "พี่พฤกษ์",
+  "พี่แนน",
+  "พี่ปลา",
+  "พี่ฟิว",
+  "พี่วัน WAN",
+  "พี่สตังค์",
+  "พี่อรัณย์",
+  "พัตเตอร์",
+  "อุ่น",
+  "ฟ้า",
+  "อ้อน",
+  // ... ใส่ให้ครบตามจำนวนคนจริง
+];
 const TEAMS = ["A", "B", "C", "D"];
 
 const TEAM_THEME = {
