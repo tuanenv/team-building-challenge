@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>ลงทะเบียนเข้าทีม — Team Building Challenge</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { margin: 0; background: #0f172a; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="load-error" style="display:none; color:#f87171; font-family:sans-serif; padding:2rem; text-align:center; white-space:pre-line;"></div>
+
+<script>
+  window.addEventListener("DOMContentLoaded", function () {
+    setTimeout(function () {
+      var missing = [];
+      if (typeof React === "undefined") missing.push("React (cdnjs.cloudflare.com)");
+      if (typeof ReactDOM === "undefined") missing.push("ReactDOM (cdnjs.cloudflare.com)");
+      if (typeof Babel === "undefined") missing.push("Babel (unpkg.com)");
+      var rootEl = document.getElementById("root");
+      if (missing.length > 0 && (!rootEl || !rootEl.hasChildNodes())) {
+        document.getElementById("load-error").style.display = "block";
+        document.getElementById("load-error").innerText =
+          "โหลดไลบรารีไม่สำเร็จ: " + missing.join(", ") +
+          "\n\nเครือข่ายนี้อาจบล็อกโดเมนดังกล่าว ลองเปิดจากเครือข่ายอื่น (เช่น เน็ตมือถือ) หรือแจ้งทีม IT ให้ปลดบล็อก";
+      }
+    }, 3000);
+  });
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef, Fragment } = React;
+
+/* =========================================================
+   1) SET THIS to your Google Apps Script Web App URL
+      (same URL already used by the scoring app's index.html —
+      this page just passes a different `sheet` name)
+   ========================================================= */
+const API_URL = "PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE";
+const SHEET_NAME = "team_registration";
+const EDIT_PIN = "2808";
+
+const MOCK_NAMES = Array.from({ length: 16 }, (_, i) => `${i + 1}. สมาชิก ${String.fromCharCode(65 + (i % 26))}${i + 1}`);
+const TEAMS = ["A", "B", "C", "D"];
+
+const TEAM_THEME = {
+  A: { hex: "#2d4a7c", logo: "logos/team-a.jpg" },
+  B: { hex: "#1e3a6e", logo: "logos/team-b.jpg" },
+  C: { hex: "#1f6b4a", logo: "logos/team-c.jpg" },
+  D: { hex: "#7a1f2b", logo: "logos/team-d.jpg" },
+};
+
+function emptyState() {
+  return {
+    registrations: {}, // { [name]: teamLetter }
+  };
+}
+
+function TeamLogo({ team, size = 48 }) {
+  return (
+    <Fragment>
+      <img
+        src={TEAM_THEME[team].logo}
+        alt={"โลโก้ทีม " + team}
+        style={{ width: size, height: size, objectFit: "contain", borderRadius: "8px" }}
+        onError={(e) => {
+          e.target.style.display = "none";
+          e.target.nextSibling.style.display = "flex";
+        }}
+      />
+      <div
+        style={{ width: size, height: size, display: "none" }}
+        className="items-center justify-center rounded-lg bg-slate-200 text-slate-500 font-black text-xs"
+      >
+        {team}
+      </div>
+    </Fragment>
+  );
+}
+
+/* ---- Remote storage helpers (shared Google Apps Script backend) ---- */
+async function apiGet() {
+  const res = await fetch(API_URL + "?sheet=" + encodeURIComponent(SHEET_NAME), { method: "GET" });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "GET failed");
+  return data.value;
+}
+
+async function apiSet(valueString) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ sheet: SHEET_NAME, value: valueString }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "POST failed");
+  return true;
+}
+
+async function apiGetWithRetry() {
+  try {
+    return await apiGet();
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 800));
+    return await apiGet();
+  }
+}
+
+function pickBalancedTeam(registrations) {
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
+  Object.values(registrations).forEach((t) => { if (counts[t] !== undefined) counts[t] += 1; });
+  const minCount = Math.min(...TEAMS.map((t) => counts[t]));
+  const eligible = TEAMS.filter((t) => counts[t] === minCount);
+  return eligible[Math.floor(Math.random() * eligible.length)];
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState("register");
+  const [state, setState] = useState(emptyState());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [configWarning] = useState(API_URL.indexOf("PASTE_YOUR") === 0);
+
+  const [selectedName, setSelectedName] = useState("");
+  const [lastAssigned, setLastAssigned] = useState(null);
+  const [formError, setFormError] = useState("");
+
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+
+  const consecutiveFailuresRef = useRef(0);
+  const pendingEditRef = useRef(false);
+  const pendingEditTimeoutRef = useRef(null);
+  const PENDING_COOLDOWN_MS = 2500;
+
+  const markPendingEdit = () => {
+    pendingEditRef.current = true;
+    if (pendingEditTimeoutRef.current) clearTimeout(pendingEditTimeoutRef.current);
+    pendingEditTimeoutRef.current = setTimeout(() => {
+      pendingEditRef.current = false;
+    }, PENDING_COOLDOWN_MS);
+  };
+
+  const loadState = useCallback(async () => {
+    if (configWarning) { setLoading(false); return; }
+    if (pendingEditRef.current) { setLoading(false); return; }
+    try {
+      const value = await apiGetWithRetry();
+      if (value && !pendingEditRef.current) {
+        const parsed = JSON.parse(value);
+        setState({ ...emptyState(), ...parsed });
+      }
+      consecutiveFailuresRef.current = 0;
+      setError(null);
+    } catch (e) {
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current >= 2) {
+        setError("โหลดข้อมูลไม่สำเร็จ ตรวจสอบการเชื่อมต่อ");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [configWarning]);
+
+  useEffect(() => {
+    loadState();
+    const interval = setInterval(loadState, 5000);
+    return () => clearInterval(interval);
+  }, [loadState]);
+
+  const saveState = async (newState) => {
+    setSaving(true);
+    try {
+      await apiSet(JSON.stringify(newState));
+      setError(null);
+    } catch (e) {
+      setError("บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const registeredNames = Object.keys(state.registrations);
+  const availableNames = MOCK_NAMES.filter((n) => !registeredNames.includes(n));
+
+  const teamCounts = { A: 0, B: 0, C: 0, D: 0 };
+  const rosters = { A: [], B: [], C: [], D: [] };
+  Object.entries(state.registrations).forEach(([name, team]) => {
+    if (teamCounts[team] !== undefined) {
+      teamCounts[team] += 1;
+      rosters[team].push(name);
+    }
+  });
+  const capacityPerTeam = Math.ceil(MOCK_NAMES.length / TEAMS.length);
+
+  const handleRegister = async () => {
+    setFormError("");
+    if (!selectedName) {
+      setFormError("กรุณาเลือกชื่อก่อนกดยืนยัน");
+      return;
+    }
+    if (state.registrations[selectedName]) {
+      setFormError("ชื่อนี้ลงทะเบียนไปแล้ว กรุณาเลือกใหม่");
+      return;
+    }
+    const assignedTeam = pickBalancedTeam(state.registrations);
+    const updated = {
+      ...state,
+      registrations: { ...state.registrations, [selectedName]: assignedTeam },
+    };
+    markPendingEdit();
+    setState(updated);
+    setLastAssigned({ name: selectedName, team: assignedTeam });
+    setSelectedName("");
+    await saveState(updated);
+  };
+
+  const handleRegisterAnother = () => {
+    setLastAssigned(null);
+    setFormError("");
+  };
+
+  const handlePinSubmit = () => {
+    if (pinInput === EDIT_PIN) {
+      setIsUnlocked(true);
+      setShowPinModal(false);
+      setPinInput("");
+      setPinError(false);
+    } else {
+      setPinError(true);
+      setPinInput("");
+    }
+  };
+
+  const handleLockToggle = () => {
+    if (isUnlocked) {
+      setIsUnlocked(false);
+    } else {
+      setPinInput("");
+      setPinError(false);
+      setShowPinModal(true);
+    }
+  };
+
+  const handleResetAll = async () => {
+    if (!isUnlocked) { handleLockToggle(); return; }
+    if (!window.confirm("ล้างข้อมูลลงทะเบียนทั้งหมดจริงหรือไม่? ทำแล้วกู้คืนไม่ได้")) return;
+    const updated = emptyState();
+    markPendingEdit();
+    setState(updated);
+    setLastAssigned(null);
+    await saveState(updated);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
+        <div className="flex items-center gap-2">
+          <span className="animate-spin inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full"></span>
+          กำลังโหลดข้อมูล...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white p-4 sm:p-6">
+      {configWarning && (
+        <div className="bg-red-600 text-white text-xs sm:text-sm text-center py-2 px-3 rounded-lg mb-4">
+          ⚠️ ยังไม่ได้ตั้งค่า API_URL ในไฟล์ team-registration.html
+        </div>
+      )}
+      <div className="max-w-3xl mx-auto">
+        <div className="text-center mb-5">
+          <h1 className="text-xl sm:text-2xl font-black flex items-center justify-center gap-2">
+            👥 ลงทะเบียนเข้าทีม
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">สุ่มทีมแบบสมดุล · 4 ทีม · {MOCK_NAMES.length} คน</p>
+          {saving && (
+            <p className="text-[11px] text-slate-500 mt-1 flex items-center justify-center gap-1">
+              <span className="animate-spin inline-block w-3 h-3 border-2 border-slate-500 border-t-transparent rounded-full"></span>
+              กำลังบันทึก...
+            </p>
+          )}
+          {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+
+          <button
+            onClick={handleLockToggle}
+            className={"mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors " + (
+              isUnlocked
+                ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/40"
+                : "bg-slate-800 text-slate-300 ring-1 ring-slate-700"
+            )}
+          >
+            {isUnlocked ? "🔓 โหมดแก้ไข (แตะเพื่อล็อก)" : "🔒 ดูอย่างเดียว · แตะเพื่อปลดล็อก"}
+          </button>
+        </div>
+
+        <div className="flex gap-2 mb-5">
+          <button
+            onClick={() => setActiveTab("register")}
+            className={"flex-1 py-2.5 rounded-lg text-sm font-bold transition " + (
+              activeTab === "register" ? "bg-amber-500 text-slate-900" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            )}
+          >
+            ลงทะเบียน
+          </button>
+          <button
+            onClick={() => setActiveTab("summary")}
+            className={"flex-1 py-2.5 rounded-lg text-sm font-bold transition " + (
+              activeTab === "summary" ? "bg-amber-500 text-slate-900" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            )}
+          >
+            สรุปผลทุกทีม
+          </button>
+        </div>
+
+        {activeTab === "register" ? (
+          <div className="bg-slate-800/60 rounded-2xl p-5 sm:p-6">
+            {!lastAssigned ? (
+              <Fragment>
+                <label className="block text-xs text-slate-400 mb-2">เลือกชื่อของคุณ</label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={selectedName}
+                    onChange={(e) => setSelectedName(e.target.value)}
+                    className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-amber-400"
+                  >
+                    <option value="">-- เลือกชื่อ --</option>
+                    {availableNames.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleRegister}
+                    className="flex items-center justify-center gap-2 bg-amber-500 text-slate-900 font-bold px-5 py-2.5 rounded-lg hover:bg-amber-400 active:scale-95 transition"
+                  >
+                    🔀 สุ่มเข้าทีม
+                  </button>
+                </div>
+                {formError && <p className="text-red-400 text-xs mt-2">{formError}</p>}
+                {availableNames.length === 0 && (
+                  <p className="text-emerald-400 text-xs mt-2">✅ ลงทะเบียนครบทุกคนแล้ว</p>
+                )}
+              </Fragment>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-slate-400 text-sm mb-4">
+                  <span className="font-bold text-white">{lastAssigned.name}</span> คุณถูกจัดเข้า
+                </p>
+                <div className="flex flex-col items-center gap-3 bg-white rounded-2xl p-6 mx-auto max-w-xs">
+                  <TeamLogo team={lastAssigned.team} size={96} />
+                  <div className="text-3xl font-black" style={{ color: TEAM_THEME[lastAssigned.team].hex }}>
+                    ทีม {lastAssigned.team}
+                  </div>
+                </div>
+                <button
+                  onClick={handleRegisterAnother}
+                  className="mt-5 text-sm text-slate-400 hover:text-amber-400 underline"
+                >
+                  ลงทะเบียนคนถัดไป
+                </button>
+              </div>
+            )}
+
+            {isUnlocked && (
+              <button
+                onClick={handleResetAll}
+                className="mt-4 flex items-center gap-1.5 text-xs text-slate-500 hover:text-red-400 underline mx-auto"
+              >
+                🔄 ล้างข้อมูลลงทะเบียนทั้งหมด
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="bg-slate-800/40 rounded-2xl p-3 sm:p-4 overflow-x-auto">
+            <div className="grid grid-cols-4 gap-2 min-w-[520px]">
+              {TEAMS.map((team) => {
+                const theme = TEAM_THEME[team];
+                return (
+                  <div key={team} className="bg-white rounded-xl border border-slate-300 flex flex-col overflow-hidden">
+                    <div className="flex flex-col items-center gap-1.5 p-3 border-b border-slate-200" style={{ backgroundColor: theme.hex + "0d" }}>
+                      <TeamLogo team={team} size={40} />
+                      <div className="font-black text-base" style={{ color: theme.hex }}>ทีม {team}</div>
+                      <div className="text-xs text-slate-600">
+                        {teamCounts[team]} <span className="text-slate-400">/ {capacityPerTeam} คน</span>
+                      </div>
+                    </div>
+                    <div className="p-2 space-y-1.5 flex-1">
+                      {rosters[team].length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic text-center py-2">ยังไม่มีสมาชิก</p>
+                      ) : (
+                        rosters[team].map((name, idx) => (
+                          <div
+                            key={name}
+                            className="text-[12px] rounded-lg px-2.5 py-2 flex items-center gap-2 border-l-4"
+                            style={{ backgroundColor: theme.hex + "1a", borderColor: theme.hex }}
+                          >
+                            <span className="font-black shrink-0" style={{ color: theme.hex }}>{idx + 1}.</span>
+                            <span className="truncate font-semibold text-slate-900">{name}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showPinModal && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowPinModal(false)}
+        >
+          <div className="bg-slate-800 rounded-2xl p-5 w-full max-w-xs" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold">🔒 ใส่ PIN เพื่อแก้ไข</h3>
+              <button onClick={() => setShowPinModal(false)} className="text-slate-400 hover:text-white text-lg leading-none">✕</button>
+            </div>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              autoFocus
+              value={pinInput}
+              onChange={(e) => {
+                setPinInput(e.target.value.replace(/\D/g, "").slice(0, 4));
+                setPinError(false);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && handlePinSubmit()}
+              placeholder="••••"
+              className="w-full text-center text-2xl tracking-[0.5em] font-bold py-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-amber-400 focus:outline-none"
+            />
+            {pinError && <p className="text-red-400 text-xs mt-2 text-center">PIN ไม่ถูกต้อง ลองใหม่อีกครั้ง</p>}
+            <button
+              onClick={handlePinSubmit}
+              className="w-full mt-4 py-2.5 rounded-lg bg-amber-500 text-slate-900 font-bold text-sm active:bg-amber-600"
+            >
+              ปลดล็อก
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
